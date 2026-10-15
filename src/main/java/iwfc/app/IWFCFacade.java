@@ -17,14 +17,21 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAdjusters;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Scanner;
 
 /** Structural Facade and console entry point for IWFC. */
 public final class IWFCFacade {
+    private static final DateTimeFormatter CONSOLE_DATE_TIME =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private final GenericRepository<User> userRepository = new GenericRepository<>(User::getId);
     private final GenericRepository<Equipment> equipmentRepository = new GenericRepository<>(Equipment::getId);
     private final GenericRepository<FitnessSession> sessionRepository = new GenericRepository<>(FitnessSession::getId);
@@ -143,6 +150,32 @@ public final class IWFCFacade {
             throws UnauthorizedAccessException, InvalidBookingException {
         User member = requireRole(actor, User.Role.MEMBER);
         return bookingService.findSessionsForMember(member.getId());
+    }
+
+    /** Returns sessions assigned to the active registered Instructor. */
+    public List<FitnessSession> viewInstructorSessions(User actor)
+            throws UnauthorizedAccessException {
+        User instructor = requireRole(actor, User.Role.INSTRUCTOR);
+        return sessionRepository.findAll().stream()
+                .filter(session -> session.getInstructorId().equals(instructor.getId()))
+                .toList();
+    }
+
+    /**
+     * Selects the exact active registered User object for the console prototype.
+     * This demonstration-only lookup is not password authentication.
+     */
+    public User selectDemoUser(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("Registered user ID is required");
+        }
+        User user = userRepository.findById(userId.trim())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Unknown registered user ID: " + userId.trim()));
+        if (!user.isActive()) {
+            throw new IllegalArgumentException("The selected account is inactive");
+        }
+        return user;
     }
 
     public MaintenanceRequest reportFault(User actor, String requestId, String equipmentId,
@@ -299,54 +332,25 @@ public final class IWFCFacade {
 
         output.println("============================================================");
         output.println(" Intelligent Wellness and Fitness Center (IWFC)");
-        output.println(" Presentation Console");
+        output.println(" In-memory demonstration prototype");
         output.println("============================================================");
-        output.println("One-time Administrator setup");
-
-        User administrator = null;
-        while (administrator == null) {
-            String administratorId = readRequired(scanner, output, "Administrator ID: ");
-            if (administratorId == null) {
-                output.println("Input ended. IWFC closed safely.");
-                return;
-            }
-            String administratorName = readRequired(scanner, output, "Administrator name: ");
-            if (administratorName == null) {
-                output.println("Input ended. IWFC closed safely.");
-                return;
-            }
-            try {
-                administrator = facade.initializeAdministrator(administratorId, administratorName);
-                output.println("[SUCCESS] Administrator account created for "
-                        + administrator.getName() + ".");
-            } catch (DuplicateDataException | IllegalArgumentException exception) {
-                output.println("[ERROR] " + exception.getMessage());
-            }
+        output.println();
+        output.println("[STATUS] Initialising demonstration data...");
+        try {
+            User administrator = facade.initializeAdministrator("A1", "Rifad");
+            facade.loadSampleData(administrator);
+            output.println("[SUCCESS] Demonstration data loaded.");
+        } catch (DuplicateDataException | UnauthorizedAccessException
+                 | InvalidBookingException exception) {
+            output.println("[ERROR] Demonstration data could not be initialised: "
+                    + exception.getMessage());
+            return;
         }
 
-        boolean running = true;
-        while (running) {
-            output.println();
-            output.println("1 - Run guided IWFC workflow demonstration");
-            output.println("2 - Load sample data");
-            output.println("3 - View current data");
-            output.println("0 - Exit");
-            output.print("Select an option: ");
-            if (!scanner.hasNextLine()) {
-                output.println();
-                output.println("Input ended. IWFC closed safely.");
-                return;
-            }
-
-            String choice = scanner.nextLine().trim();
-            switch (choice) {
-                case "1" -> runGuidedDemonstration(facade, administrator, output);
-                case "2" -> loadSampleDataFromConsole(facade, administrator, output);
-                case "3" -> printCurrentData(facade, administrator, output);
-                case "0" -> running = false;
-                default -> output.println(
-                        "[ERROR] Enter 1 to run the demo or 0 to exit, or choose 2/3 for data options.");
-            }
+        while (true) {
+            User selectedUser = selectDemoAccount(facade, scanner, output);
+            if (selectedUser == null) break;
+            openRoleMenu(facade, selectedUser, scanner, output);
         }
         output.println("Thank you for using IWFC.");
     }
@@ -358,6 +362,347 @@ public final class IWFCFacade {
             String value = scanner.nextLine().trim();
             if (!value.isEmpty()) return value;
             output.println("[ERROR] This value is required. Please try again.");
+        }
+    }
+
+    private static User selectDemoAccount(IWFCFacade facade, Scanner scanner, PrintStream output) {
+        output.println();
+        output.println("--- Select a demonstration account ---");
+        output.println("Account selection is used for demonstration only.");
+        output.println("It is not password authentication.");
+        output.println();
+        output.println("ID | ROLE          | NAME     | STATUS");
+        output.println("------------------------------------------");
+        facade.userRepository.findAll().stream()
+                .filter(User::isActive)
+                .sorted(Comparator.comparing(User::getId))
+                .forEach(user -> output.printf("%-2s | %-13s | %-8s | ACTIVE%n",
+                        user.getId(), user.getRole(), user.getName()));
+        while (true) {
+            output.println();
+            output.print("Enter a user ID, or EXIT: ");
+            if (!scanner.hasNextLine()) {
+                output.println();
+                output.println("Input ended. IWFC closed safely.");
+                return null;
+            }
+            String selectedId = scanner.nextLine().trim();
+            if (selectedId.equalsIgnoreCase("EXIT")) return null;
+            try {
+                User selected = facade.selectDemoUser(selectedId);
+                output.printf("[SUCCESS] Demonstration account selected: %s - %s (%s)%n",
+                        selected.getId(), selected.getName(), selected.getRole());
+                return selected;
+            } catch (IllegalArgumentException exception) {
+                output.println("[ERROR] " + exception.getMessage());
+            }
+        }
+    }
+
+    private static User openRoleMenu(IWFCFacade facade, User currentUser,
+                                     Scanner scanner, PrintStream output) {
+        return switch (currentUser.getRole()) {
+            case ADMINISTRATOR -> runAdministratorMenu(facade, currentUser, scanner, output);
+            case INSTRUCTOR -> runInstructorMenu(facade, currentUser, scanner, output);
+            case MEMBER -> runMemberMenu(facade, currentUser, scanner, output);
+        };
+    }
+
+    private static User runAdministratorMenu(IWFCFacade facade, User currentUser,
+                                             Scanner scanner, PrintStream output) {
+        while (true) {
+            output.println();
+            output.println("--- Administrator menu ---");
+            output.println("1 - View registered users");
+            output.println("2 - View equipment");
+            output.println("3 - View all sessions");
+            output.println("4 - View maintenance log");
+            output.println("5 - Assign maintenance");
+            output.println("6 - Complete maintenance");
+            output.println("7 - View notifications");
+            output.println("0 - Logout");
+            String choice = readMenuChoice(scanner, output);
+            if (choice == null || choice.equals("0")) return null;
+            try {
+                switch (choice) {
+                    case "1" -> printUsers(facade.viewUsers(currentUser), output);
+                    case "2" -> printEquipment(facade.viewEquipment(currentUser), output);
+                    case "3" -> printSessions(facade.viewAllSessions(currentUser), output);
+                    case "4" -> printMaintenance(facade.viewMaintenanceRequests(currentUser), output);
+                    case "5" -> assignMaintenanceFromConsole(facade, currentUser, scanner, output);
+                    case "6" -> completeMaintenanceFromConsole(facade, currentUser, scanner, output);
+                    case "7" -> printNotifications(currentUser, output);
+                    default -> output.println("[ERROR] Enter an Administrator menu option from 0 to 7.");
+                }
+            } catch (Exception exception) {
+                output.println("[ERROR] " + exception.getMessage());
+            }
+        }
+    }
+
+    private static User runInstructorMenu(IWFCFacade facade, User currentUser,
+                                          Scanner scanner, PrintStream output) {
+        while (true) {
+            output.println();
+            output.println("--- Instructor menu ---");
+            output.println("1 - View my sessions");
+            output.println("2 - Schedule a single session");
+            output.println("3 - Schedule recurring weekly sessions");
+            output.println("4 - Record equipment usage");
+            output.println("5 - Report an equipment fault");
+            output.println("6 - View notifications");
+            output.println("0 - Logout");
+            String choice = readMenuChoice(scanner, output);
+            if (choice == null || choice.equals("0")) return null;
+            try {
+                switch (choice) {
+                    case "1" -> printSessions(facade.viewInstructorSessions(currentUser), output);
+                    case "2" -> scheduleSingleFromConsole(facade, currentUser, scanner, output);
+                    case "3" -> scheduleRecurringFromConsole(facade, currentUser, scanner, output);
+                    case "4" -> recordUsageFromConsole(facade, currentUser, scanner, output);
+                    case "5" -> reportFaultFromConsole(facade, currentUser, scanner, output);
+                    case "6" -> printNotifications(currentUser, output);
+                    default -> output.println("[ERROR] Enter an Instructor menu option from 0 to 6.");
+                }
+            } catch (Exception exception) {
+                output.println("[ERROR] " + exception.getMessage());
+            }
+        }
+    }
+
+    private static User runMemberMenu(IWFCFacade facade, User currentUser,
+                                      Scanner scanner, PrintStream output) {
+        while (true) {
+            output.println();
+            output.println("--- Member menu ---");
+            output.println("1 - View available sessions");
+            output.println("2 - Book a session");
+            output.println("3 - View my bookings");
+            output.println("4 - View notifications");
+            output.println("0 - Logout");
+            String choice = readMenuChoice(scanner, output);
+            if (choice == null || choice.equals("0")) return null;
+            try {
+                switch (choice) {
+                    case "1" -> printSessions(facade.viewAvailableSessions(currentUser), output);
+                    case "2" -> bookSessionFromConsole(facade, currentUser, scanner, output);
+                    case "3" -> printSessions(facade.viewMyBookings(currentUser), output);
+                    case "4" -> printNotifications(currentUser, output);
+                    default -> output.println("[ERROR] Enter a Member menu option from 0 to 4.");
+                }
+            } catch (Exception exception) {
+                output.println("[ERROR] " + exception.getMessage());
+            }
+        }
+    }
+
+    private static String readMenuChoice(Scanner scanner, PrintStream output) {
+        output.print("Select an option: ");
+        if (!scanner.hasNextLine()) {
+            output.println();
+            output.println("Input ended. Returning safely.");
+            return null;
+        }
+        return scanner.nextLine().trim();
+    }
+
+    private static String readActionValue(Scanner scanner, PrintStream output, String prompt) {
+        output.print(prompt);
+        if (!scanner.hasNextLine()) {
+            throw new IllegalArgumentException("Input ended before the operation was complete");
+        }
+        String value = scanner.nextLine().trim();
+        if (value.isEmpty()) throw new IllegalArgumentException("This value is required");
+        return value;
+    }
+
+    private static void scheduleSingleFromConsole(IWFCFacade facade, User actor,
+                                                  Scanner scanner, PrintStream output)
+            throws UnauthorizedAccessException, InvalidBookingException, DuplicateDataException {
+        String id = readActionValue(scanner, output, "Session ID: ");
+        String title = readActionValue(scanner, output, "Title: ");
+        LocalDateTime start = readDateTime(scanner, output, "Start (yyyy-MM-dd HH:mm): ");
+        LocalDateTime end = readDateTime(scanner, output, "End (yyyy-MM-dd HH:mm): ");
+        String studio = readActionValue(scanner, output, "Studio: ");
+        List<String> equipmentIds = readEquipmentIds(scanner, output);
+        int capacity = readPositiveInt(scanner, output, "Capacity: ");
+        FitnessSession session = facade.scheduleSession(
+                actor, id, title, start, end, studio, equipmentIds, capacity);
+        output.println("[SUCCESS] Session scheduled: " + session.getId());
+    }
+
+    private static void scheduleRecurringFromConsole(IWFCFacade facade, User actor,
+                                                     Scanner scanner, PrintStream output)
+            throws UnauthorizedAccessException, InvalidBookingException, DuplicateDataException {
+        String id = readActionValue(scanner, output, "Recurring base ID: ");
+        String title = readActionValue(scanner, output, "Title: ");
+        LocalDateTime start = readDateTime(scanner, output, "First start (yyyy-MM-dd HH:mm): ");
+        LocalDateTime end = readDateTime(scanner, output, "First end (yyyy-MM-dd HH:mm): ");
+        String studio = readActionValue(scanner, output, "Studio: ");
+        List<String> equipmentIds = readEquipmentIds(scanner, output);
+        int capacity = readPositiveInt(scanner, output, "Capacity: ");
+        int weeks = readPositiveInt(scanner, output, "Weeks (1-12): ");
+        List<FitnessSession> sessions = facade.scheduleWeeklySessions(
+                actor, id, title, start, end, studio, equipmentIds, capacity, weeks);
+        output.println("[SUCCESS] Recurring sessions scheduled: "
+                + sessions.stream().map(FitnessSession::getId).toList());
+    }
+
+    private static void recordUsageFromConsole(IWFCFacade facade, User actor,
+                                               Scanner scanner, PrintStream output)
+            throws UnauthorizedAccessException {
+        String sessionId = readActionValue(scanner, output, "Session ID: ");
+        String equipmentId = readActionValue(scanner, output, "Equipment ID: ");
+        double hours = readPositiveDouble(scanner, output, "Usage hours: ");
+        facade.recordSessionEquipmentUsage(actor, sessionId, equipmentId, hours);
+        output.println("[SUCCESS] Equipment usage recorded.");
+    }
+
+    private static void reportFaultFromConsole(IWFCFacade facade, User actor,
+                                               Scanner scanner, PrintStream output)
+            throws UnauthorizedAccessException, DuplicateDataException {
+        String requestId = readActionValue(scanner, output, "Request ID: ");
+        String equipmentId = readActionValue(scanner, output, "Equipment ID: ");
+        String description = readActionValue(scanner, output, "Description: ");
+        String urgencyValue = readActionValue(scanner, output, "Urgency (LOW/MEDIUM/HIGH): ");
+        MaintenanceRequest.Urgency urgency;
+        try {
+            urgency = MaintenanceRequest.Urgency.valueOf(urgencyValue.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Urgency must be LOW, MEDIUM or HIGH");
+        }
+        MaintenanceRequest request = facade.reportFault(
+                actor, requestId, equipmentId, description, urgency);
+        output.printf("[SUCCESS] Fault reported: %s | %s | %s%n",
+                request.getId(), request.getUrgency(), request.getStatus());
+    }
+
+    private static void bookSessionFromConsole(IWFCFacade facade, User actor,
+                                               Scanner scanner, PrintStream output)
+            throws UnauthorizedAccessException, InvalidBookingException {
+        String sessionId = readActionValue(scanner, output, "Session ID: ");
+        facade.bookSession(actor, sessionId);
+        output.println("[SUCCESS] Session booked: " + sessionId);
+    }
+
+    private static void assignMaintenanceFromConsole(IWFCFacade facade, User actor,
+                                                     Scanner scanner, PrintStream output)
+            throws UnauthorizedAccessException {
+        String requestId = readActionValue(scanner, output, "Maintenance request ID: ");
+        String assignee = readActionValue(scanner, output, "Assignee name: ");
+        facade.assignMaintenance(actor, requestId, assignee);
+        printMaintenanceStatus(facade, actor, requestId, output);
+    }
+
+    private static void completeMaintenanceFromConsole(IWFCFacade facade, User actor,
+                                                       Scanner scanner, PrintStream output)
+            throws UnauthorizedAccessException {
+        String requestId = readActionValue(scanner, output, "Maintenance request ID: ");
+        facade.completeMaintenance(actor, requestId);
+        printMaintenanceStatus(facade, actor, requestId, output);
+    }
+
+    private static void printMaintenanceStatus(IWFCFacade facade, User actor,
+                                               String requestId, PrintStream output)
+            throws UnauthorizedAccessException {
+        MaintenanceRequest request = facade.viewMaintenanceRequests(actor).stream()
+                .filter(item -> item.getId().equals(requestId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Unknown maintenance request ID: " + requestId));
+        Equipment equipment = facade.viewEquipment(actor).stream()
+                .filter(item -> item.getId().equals(request.getEquipmentId())).findFirst()
+                .orElseThrow();
+        output.printf("[STATUS] Request %s: %s | Equipment %s: %s%n",
+                request.getId(), request.getStatus(), equipment.getId(), equipment.getStatus());
+    }
+
+    private static LocalDateTime readDateTime(Scanner scanner, PrintStream output, String prompt) {
+        String value = readActionValue(scanner, output, prompt);
+        try {
+            return LocalDateTime.parse(value, CONSOLE_DATE_TIME);
+        } catch (DateTimeParseException exception) {
+            throw new IllegalArgumentException("Date and time must use yyyy-MM-dd HH:mm");
+        }
+    }
+
+    private static int readPositiveInt(Scanner scanner, PrintStream output, String prompt) {
+        String value = readActionValue(scanner, output, prompt);
+        try {
+            int number = Integer.parseInt(value);
+            if (number <= 0) throw new NumberFormatException();
+            return number;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("Enter a positive whole number");
+        }
+    }
+
+    private static double readPositiveDouble(Scanner scanner, PrintStream output, String prompt) {
+        String value = readActionValue(scanner, output, prompt);
+        try {
+            double number = Double.parseDouble(value);
+            if (!Double.isFinite(number) || number <= 0) throw new NumberFormatException();
+            return number;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("Enter a positive finite number");
+        }
+    }
+
+    private static List<String> readEquipmentIds(Scanner scanner, PrintStream output) {
+        output.print("Equipment IDs (comma-separated, or NONE): ");
+        if (!scanner.hasNextLine()) {
+            throw new IllegalArgumentException("Input ended before the operation was complete");
+        }
+        String value = scanner.nextLine().trim();
+        if (value.isEmpty() || value.equalsIgnoreCase("NONE")) return List.of();
+        return Arrays.stream(value.split(","))
+                .map(String::trim).filter(item -> !item.isEmpty()).toList();
+    }
+
+    private static void printUsers(List<User> users, PrintStream output) {
+        output.println("ID | Role | Name | Status");
+        users.forEach(user -> output.printf("%s | %s | %s | %s%n",
+                user.getId(), user.getRole(), user.getName(), user.isActive() ? "ACTIVE" : "INACTIVE"));
+    }
+
+    private static void printEquipment(List<Equipment> equipment, PrintStream output) {
+        output.println("ID | Name | Location | Status | Active | Usage hrs");
+        equipment.forEach(item -> output.printf("%s | %s | %s | %s | %s | %.1f%n",
+                item.getId(), item.getName(), item.getLocation(), item.getStatus(),
+                item.isActive(), item.getCumulativeUsageHours()));
+    }
+
+    private static void printSessions(List<FitnessSession> sessions, PrintStream output) {
+        if (sessions.isEmpty()) {
+            output.println("No sessions to display.");
+            return;
+        }
+        output.println("ID | Title | Date | Time | Studio | Booked/Capacity");
+        sessions.forEach(session -> output.printf("%s | %s | %s | %s-%s | %s | %d/%d%n",
+                session.getId(), session.getTitle(), session.getStartTime().toLocalDate(),
+                session.getStartTime().toLocalTime(), session.getEndTime().toLocalTime(),
+                session.getStudio(), session.getBookedMemberIds().size(), session.getCapacity()));
+    }
+
+    private static void printMaintenance(List<MaintenanceRequest> requests, PrintStream output) {
+        if (requests.isEmpty()) {
+            output.println("No maintenance requests to display.");
+            return;
+        }
+        output.println("ID | Equipment | Urgency | Status | Assignee");
+        requests.forEach(request -> output.printf("%s | %s | %s | %s | %s%n",
+                request.getId(), request.getEquipmentId(), request.getUrgency(), request.getStatus(),
+                request.getAssignedTo() == null ? "-" : request.getAssignedTo()));
+    }
+
+    private static void printNotifications(User currentUser, PrintStream output) {
+        List<String> notifications = currentUser.getNotifications();
+        if (notifications.isEmpty()) {
+            output.println("No notifications for this account.");
+            return;
+        }
+        output.printf("Notifications for %s - %s%n", currentUser.getId(), currentUser.getName());
+        for (int index = 0; index < notifications.size(); index++) {
+            output.printf("%d. %s%n", index + 1, notifications.get(index));
         }
     }
 

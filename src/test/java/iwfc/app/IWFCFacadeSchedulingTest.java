@@ -142,6 +142,23 @@ class IWFCFacadeSchedulingTest {
         assertThrows(InvalidBookingException.class, () -> facade.bookSession(member, "S1"));
     }
 
+    @Test
+    void instructorViewsOnlyTheirOwnSessions() throws Exception {
+        User secondInstructor = facade.registerUser(
+                administrator, User.Role.INSTRUCTOR, "I2", "Inoka");
+        schedule(instructor, "S1", at(9), at(10), "Studio A", List.of("EQ1"), 5);
+        schedule(secondInstructor, "S2", at(10), at(11), "Studio B", List.of(), 5);
+
+        assertEquals(List.of("S1"), facade.viewInstructorSessions(instructor).stream()
+                .map(FitnessSession::getId).toList());
+        assertEquals(List.of("S2"), facade.viewInstructorSessions(secondInstructor).stream()
+                .map(FitnessSession::getId).toList());
+        assertThrows(UnauthorizedAccessException.class,
+                () -> facade.viewInstructorSessions(member));
+        assertThrows(UnauthorizedAccessException.class,
+                () -> facade.viewInstructorSessions(administrator));
+    }
+
     private FitnessSession schedule(User actor, String id, LocalDateTime start,
                                     LocalDateTime end, String studio, List<String> equipmentIds,
                                     int capacity) throws Exception {

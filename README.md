@@ -4,7 +4,7 @@ IWFC is a Java 21 console prototype for managing fitness equipment, session sche
 
 ## Architecture
 
-The project contains exactly 15 production Java source files across five packages:
+The project contains exactly 15 production Java source files across six packages:
 
 - `iwfc.app`: application Facade and console entry point
 - `iwfc.domain`: users, equipment, sessions, and maintenance entities
@@ -35,13 +35,13 @@ From the repository root:
 mvn --batch-mode clean test
 ```
 
-Create the application JAR:
+Create the application JAR without rerunning the tests:
 
 ```powershell
-mvn --batch-mode package
+mvn --batch-mode -DskipTests package
 ```
 
-## Run
+## Run the role-based demonstration
 
 After packaging:
 
@@ -49,7 +49,23 @@ After packaging:
 java -cp target\iwfc-management-system-1.0.0-SNAPSHOT.jar iwfc.app.IWFCFacade
 ```
 
-The console guides the user through one-time Administrator setup. Its demonstration options cover sample-data loading, equipment and session viewing, scheduling and booking, equipment usage, maintenance, and notifications.
+At startup, the console automatically creates Administrator `A1` / `Rifad` through
+the existing Facade initialization operation and loads the verified sample dataset.
+It then displays a demonstration account selector. User IDs are upper case, such as
+`A1`, `I1`, and `M5`.
+
+Account selection is used only to demonstrate the three roles. It is not password
+authentication. Selecting an active registered user opens the corresponding
+Administrator, Instructor, or Member menu, while the existing Facade authorization
+checks still protect every business operation.
+
+Each role menu contains one `0 - Logout` option. Selecting `0` returns to the account
+selector without clearing in-memory application data. `EXIT` is accepted only at the
+account selector and closes the application.
+
+The role menus demonstrate equipment administration, session scheduling, recurring
+weekly sessions, Member bookings, equipment usage, maintenance processing, and
+filtered in-system notifications.
 
 ## Strict Java 21 compilation
 

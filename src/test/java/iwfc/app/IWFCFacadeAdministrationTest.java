@@ -20,6 +20,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -287,5 +288,50 @@ class IWFCFacadeAdministrationTest {
         User member = facade.registerUser(administrator, User.Role.MEMBER, "M9", "Reader");
 
         assertThrows(UnauthorizedAccessException.class, () -> facade.viewAllSessions(member));
+    }
+
+    @Test
+    void selectsExactRegisteredActiveInstructorAndMemberForDemo() throws Exception {
+        IWFCFacade facade = new IWFCFacade();
+        User administrator = facade.initializeAdministrator("A1", "Rifad");
+        User instructor = facade.registerUser(
+                administrator, User.Role.INSTRUCTOR, "I1", "Tharindu");
+        User member = facade.registerUser(administrator, User.Role.MEMBER, "M1", "Ishara");
+
+        assertSame(instructor, facade.selectDemoUser(" I1 "));
+        assertSame(member, facade.selectDemoUser("M1"));
+        assertSame(administrator, facade.selectDemoUser("A1"));
+    }
+
+    @Test
+    void demoSelectionRejectsBlankUnknownAndInactiveAccounts() throws Exception {
+        IWFCFacade facade = new IWFCFacade();
+        User administrator = facade.initializeAdministrator("A1", "Rifad");
+        User member = facade.registerUser(administrator, User.Role.MEMBER, "M1", "Ishara");
+        facade.deactivateUser(administrator, member.getId());
+
+        assertThrows(IllegalArgumentException.class, () -> facade.selectDemoUser(" "));
+        assertThrows(IllegalArgumentException.class, () -> facade.selectDemoUser(null));
+        assertThrows(IllegalArgumentException.class, () -> facade.selectDemoUser("UNKNOWN"));
+        assertThrows(IllegalArgumentException.class, () -> facade.selectDemoUser("M1"));
+    }
+
+    @Test
+    void repeatedDemoSelectionPreservesStoredData() throws Exception {
+        IWFCFacade facade = new IWFCFacade();
+        User administrator = facade.initializeAdministrator("A1", "Rifad");
+        facade.loadSampleData(administrator);
+
+        User member = facade.selectDemoUser("M4");
+        User instructor = facade.selectDemoUser("I1");
+        User selectedAdministrator = facade.selectDemoUser("A1");
+
+        assertEquals(User.Role.MEMBER, member.getRole());
+        assertEquals(User.Role.INSTRUCTOR, instructor.getRole());
+        assertSame(administrator, selectedAdministrator);
+        assertEquals(8, facade.viewUsers(administrator).size());
+        assertEquals(8, facade.viewEquipment(administrator).size());
+        assertEquals(7, facade.viewAllSessions(administrator).size());
+        assertEquals(2, facade.viewMaintenanceRequests(administrator).size());
     }
 }
